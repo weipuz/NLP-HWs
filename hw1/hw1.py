@@ -1,6 +1,7 @@
 # NLP-hw1:
 # Using heap-based DP algorithm given in pseduo-code, applied bi-gram model and good turing smooth.
-#https://class.coursera.org/nlp/lecture/32
+# https://class.coursera.org/nlp/lecture/32
+# 
 import sys, codecs, optparse, os
 from heapq import *
 from math import log10
