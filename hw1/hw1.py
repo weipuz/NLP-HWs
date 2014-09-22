@@ -25,10 +25,6 @@ def datafile(name, sep='\t'):
     for line in file(name):
         yield line.split(sep)
 
-#entry tuple
-def make_entry(word = '', start_pos = 0, log_prob = -1e30, back_pointer = None):#notice the -INF log_prob 
-    return (word,start_pos, log_prob, back_pointer)
-
 #output heap
 def dump_heap(myheap):
 	for item in myheap:
@@ -41,9 +37,9 @@ def dump_heap(myheap):
 #output entry
 def dump_entry(entry):
 	if entry[3] ==None:
-		print 'chartEntry( word=%s, start=%d, log_prob=%f, back_pointer=%s )' %(entry[0].decode('utf-8'),entry[1],entry[2],entry[3])
+		print 'chartEntry( word=%s, start=%d, end=%d, log_prob=%f, back_pointer=%s )' %(entry[0].decode('utf-8'),entry[1], entry[1]+len(entry[0])/3-1, entry[2],entry[3])
 	else:
-		print 'chartEntry( word=%s, start=%d, log_prob=%f, back_pointer=%d )' %(entry[0].decode('utf-8'),entry[1],entry[2],entry[3])
+		print 'chartEntry( word=%s, start=%d, end=%d, log_prob=%f, back_pointer=%d )' %(entry[0].decode('utf-8'),entry[1], entry[1]+len(entry[0])/3-1, entry[2],entry[3])
 	print
 
 #return log probability, base is 2 for observer's convenience and other non-trivial stuff..
@@ -55,21 +51,31 @@ def log_prob(prob):
 
 class Pdist(dict):
     "A probability distribution estimated from counts in datafile."
+    self.c_0 = 0;
     def __init__(self, data=[]):
         for key,count in data:
             self[key] = self.get(key, 0) + int(count)
+            if int(count) == 1:
+                self.c_0 = self.c_0 + 1
+
             
         self.N = float(sum(self.itervalues()))
         
-        self.missingfn = (lambda k, N: 1./N) # little trick. (lambda k, N: 10./N*10**len(k))
+        self.missingfn = (lambda k, N: self.c_0/N) # little trick. (lambda k, N: 10./N*10**len(k))
     
     def __call__(self, key): 
         if key in self: 
             return self[key]/self.N  
         else: 
+            print "Hahayou!"
+            print self.c_0
             return self.missingfn(key, self.N)
 
 Pw  = Pdist(datafile(opts.counts1w))
+
+#entry tuple
+def make_entry(word = '', start_pos = 0, log_prob = -1e10, back_pointer = None):#notice the -INF log_prob 
+    return (word,start_pos, log_prob, back_pointer)
 
 def word_seg(input_line):
     global test_mode, word_max_len
@@ -86,14 +92,13 @@ def word_seg(input_line):
     for i in range(word_max_len):
         word = input_line[0:i+1].encode('utf-8')
         found_logprob = log_prob( Pw(word) )
-        not_found = log_prob(Pw.missingfn(word,Pw.N))
-        if found_logprob > not_found:
-            entry = make_entry(word, 0, found_logprob, None)
-            heappush(candidates, entry)      
-    #if no matching word at position 0, insert the one or two characters to initialize heap
-    if len(candidates) ==0 : 
-        heappush(candidates, make_entry(input_line[0:1].encode('utf-8'),0, not_found, None)) #the log_prob = not_found here, you can change it.
+        entry = make_entry(word, 0, found_logprob, None)
+        #if found_logprob > chart[i+1][2]:
+        heappush(candidates, entry)      
+        chart[i+1] = entry
+        dump_entry( entry )
     
+    heapify(candidates)
     if test_mode:
         print "="*6,"Initialize Candidates Chart & Heap ", "="*6
         print
@@ -102,26 +107,19 @@ def word_seg(input_line):
     #=============================== Initialization Complete ===========================
         
     #=============================== Start While Loop ==================================
-    end_index = 0
     while candidates:        
         #Sort Candidates By Start Position
         candidates = sorted(candidates, key = lambda entry:entry[1])
-        top_entry  = candidates.pop()
-        #print 'top entry:   '
-        #dump_entry(top_entry)
-        #print 'currrent heap:   '
-        #dump_heap(myheap)
-
-    
+        dump_heap(candidates)
+        top_entry  = heappop(candidates)
+      
         #be careful with unicode word length    
         word_length = len(top_entry[0].decode('utf-8'))
-        end_index = (top_entry[1]) + word_length - 1                            
+        end_index = top_entry[1] + word_length - 1                            
         #print end_index, current_word_length
         if chart[end_index][2] < top_entry[2]: #if popup word is better, replace the old one
             chart[end_index] = top_entry
-        insert_flag = 0 #monitor the insert action below, 
-        #print "current chart:   "  
-        #dump_heap(chart) 
+      
         ##############################################################################################
         #INSERT NEW WORD "KEY PROCESS"  
         #this process should be changed according to our discussion today
@@ -129,34 +127,12 @@ def word_seg(input_line):
             #i = word_max_len - t#backward lookup
             if end_index+i <= line_len-1:
                 word  = input_line[end_index + 1: end_index + 1 + i].encode('utf-8')
-                
                 found_logprob = log_prob( Pw(word) )
-                not_found  = log_prob(Pw.missingfn(word,Pw.N))
-                if found_logprob> not_found:
-                    insert_flag = 1
-                    entry = make_entry(word, end_index+1, top_entry[2] + found_logprob, end_index)
-                    #print i
-                    candidates.append(entry)
-                #elif insert_flag ==1:
-                #    current_entry = make_entry(current_word, end_index+1, top_entry[2] + not_found , end_index)
-                #    myheap.append(current_entry)
-                    
-        #print insert_flag
-        if end_index != line_len-1:#if no matching word, push next two words into heap
-            if insert_flag == 0:
-                word = input_line[end_index + 1: end_index + 1].encode('utf-8')
-                entry = make_entry(word,end_index+1,top_entry[2]+ log_prob(Pw.missingfn(word,Pw.N)),end_index)
-                candidates.append(entry)
-                #current_word = input_line[end_index + 1: end_index + 3].encode('utf-8')
-                #current_entry = make_entry(current_word,end_index+1,top_entry[2]+log10(Pw.missingfn(current_word,Pw.N)),end_index)
-                #myheap.append(current_entry)
-                #print 'GUESS TWO CHARACTERS!!!!!!!!!!!!! '
-                #print
-                
-                #print end_index, top_entry[0].decode('utf-8'), top_entry[1],current_word_length, current_entry[0].decode('utf-8')
-                #print 'heap after insert newword:    '
-                #dump_heap(myheap)
-    #print '*'*100
+                entry = make_entry(word, end_index+1, found_logprob, end_index)
+                #if found_logprob > chart[i+1][2]:
+                heappush(candidates, entry)      
+                chart[i+1] = entry
+                dump_entry( entry )
     ################################################end while loop #######################################            
                 
     #build output from chart table and backponter
