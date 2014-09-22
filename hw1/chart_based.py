@@ -46,15 +46,12 @@ def log_prob(prob):
 class Pdist(dict):
     "A probability distribution estimated from counts in datafile."
     def __init__(self, data=[],  missingfn=None):
-        self.c_0 = 0
         for key,count in data:
             self[key] = self.get(key, 0) + int(count)
-            if int(count) == 1:
-                self.c_0 = self.c_0 + 1
             
         self.N = float(sum(self.itervalues()))
         
-        self.missingfn = missingfn or (lambda k, N: self.c_0/float(N) ) # longer word less likely...
+        self.missingfn = missingfn or (lambda k, N: 1./float(N) )
     
     def __call__(self, key): 
         if key in self: 
