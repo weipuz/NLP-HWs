@@ -48,7 +48,7 @@ class Pdist(dict):
     def __init__(self, data=[],  missingfn=None):
         for key,count in data:
             self[key] = self.get(key, 0) + int(count)
-            
+
         self.N = float(sum(self.itervalues()))
         
         self.missingfn = missingfn or (lambda k, N: 1./float(N) )
@@ -141,18 +141,18 @@ def word_seg(input_line):
     entry = chart[line_len]
     output_line.append(entry[0])
 
-    while entry[3] != None:#append all previous words until chart[0]
+    while entry[3] is not None and entry[3] != 0:#append all previous words until chart[0]
         output_line.append(chart[entry[3]][0])        
         entry  = chart[entry[3]]
-        #print entry[3]
-        if entry[3] == None:
-            return output_line
+    return output_line
    
 ####################################################end word_seg##################
 
 old = sys.stdout
 sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
 # ignoring the dictionary provided in opts.counts
+
+
 with open(opts.input) as f:
     #count_line_number = 1
     for line in f:        
