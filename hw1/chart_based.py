@@ -2,6 +2,7 @@
 import sys, codecs, optparse, os
 from heapq import *
 from math import log10
+import re
 
 
 optparser = optparse.OptionParser()
@@ -77,6 +78,30 @@ P2w = Pdist(datafile(opts.counts2w))
 def make_entry(word = '', start_pos = 0, log_prob = -1e10, back_pointer = None):#notice the -INF log_prob 
     return (word,start_pos, log_prob, back_pointer)
 
+def __cut_DAG_NO_HMM(sentence):
+    re_eng = re.compile(ur'[a-zA-Z0-9]',re.U)
+    DAG = get_DAG(sentence)
+    route ={}
+    calc(sentence,DAG,0,route=route)
+    x = 0
+    N = len(sentence)
+    buf = u''
+    while x<N:
+        y = route[x][1]+1
+        l_word = sentence[x:y]
+        if re_eng.match(l_word) and len(l_word)==1:
+            buf += l_word
+            x =y
+        else:
+            if len(buf)>0:
+                yield buf
+                buf = u''
+            yield l_word
+            x =y
+    if len(buf)>0:
+        yield buf
+        buf = u''
+
 def word_seg(input_line):
     line_len = len(input_line)    
     word_max_len = 8
@@ -133,7 +158,6 @@ def word_seg(input_line):
                     dump_entry (chart[i])  
                     print
                    
-          
         i = i+1;
 
     #build output from chart table and backponter
@@ -148,22 +172,28 @@ def word_seg(input_line):
    
 ####################################################end word_seg##################
 
+
 old = sys.stdout
 sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
-# ignoring the dictionary provided in opts.counts
-
 
 with open(opts.input) as f:
     #count_line_number = 1
     for line in f:        
         utf8line = unicode(line.strip(), 'utf-8')
+        
+        # delimit_list = [i for i in p.split(utf8line) if i != " " and i != ""]
+        #     for i in delimit_list:
+        # print i  
         #do some preprocessing to the sentence, break it into pieces by punctuations ,     
         split_line_comma = utf8line.split(u'\uff0c') #split by comma
-        for item in split_line_comma:             
+        split_line_comma = __cut_internal(utf8line)
+        # print re.match(ur"[\u4e00-\u9fa5]", utf8line)
+        for item in split_line_comma:  
+            print item  
             fraction2 = reversed(word_seg(item))
-            for word in fraction2:
-                print word.decode('utf-8'),  
-            if item != split_line_comma[-1]:#print comma after fraction
-                print u'\uff0c',    
-        print
+            # for word in fraction2:
+                # print word.decode('utf-8'),  
+            # if item != split_line_comma[-1]:#print comma after fraction
+                # print u'\uff0c',    
+        # print
 sys.stdout = old
