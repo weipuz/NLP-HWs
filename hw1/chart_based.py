@@ -14,8 +14,12 @@ optparser.add_option("-i", "--inputfile", dest="input", default=os.path.join('da
 # Global Variables 
 debug_mode = False
 word_max_len = 6
-delta = 0.001
-
+delta = 0.075
+base = 10 # log base
+# length 1, 2, 3, 4, 5, more than 5
+length_penalty = [1.4, 3.9, 8, 12, 17, 25, 30]  # 90.15
+#length_penalty = [2, 4, 8, 12, 17, 25, 30]  #90.10
+#length_penalty = [3, 3.9, 8.1, 15, 17, 25, 30]
 def datafile(name, sep='\t'):
     "Read key,value pairs from file."
     for line in file(name):
@@ -40,10 +44,11 @@ def dump_entry(entry):
 
 #return log probability, base is 2 for observer's convenience and other non-trivial stuff..
 def log_prob(prob):
+    global base
     if prob <= 0:
         return -1e10
     else:
-        return log10(prob)/log10(8)
+        return log10(prob)/log10(base)
 
 
 class Pdist(dict):
@@ -58,13 +63,20 @@ class Pdist(dict):
     
     def __call__(self, key): 
         if key in self: 
-            return (len(key)/3)**4*self[key]/self.N  
-        else: 
+            return self[key]/self.N  
+        else:     
             return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
 
 def avoid_long_words(word, N):
     "Estimate the probability of an unknown word."
     return 10./(N * 10**len(word))
+
+def avoid_long_words_II(word, N):
+    global length_penalty, base
+    l = len(word)/3
+    if l > 6:
+        l = 7
+    return base /float(N * base **length_penalty[l-1])
 
 #==================== Begin: Generate character bigram using count1w.txt ========================
 class PCdist(dict):
@@ -117,31 +129,13 @@ def avoid_long_words_character(word, N):
     for i in range(len(word)-1):
         sum_prob += log_prob( PCw(word[i:i+2]))
     sum_prob += log_prob(PCw(word[-1]+"</S>"))
-    return 8**(sum_prob)
+    global base 
+    return base**(sum_prob)
 
 PC2w = PC2dist(datafile(opts.counts1w))
 PCw = PCdist(datafile(opts.counts1w))
 #==================== End: Generate character bigram using count1w.txt ========================
 #Here are some secret parameters, we are doing engineering not science Saddly
-
-def avoid_long_words_II(word, N):
-
-    if len(word)/3 == 1:
-        return 10./(N * 10**3)
-    elif len(word)/3 == 2:
-        return 10./(N * 10**4)
-    elif len(word)/3  == 3:
-        return 10./(N * 10**9)
-    elif len(word)/3  == 4:
-        return 10./(N * 10**15)
-    elif len(word)/3  == 5:
-        return 10./(N * 10**18)
-    else:
-        return 10./(N * 10**30)
-    
-    '''else:
-        return float((0.85/sum1)/(pow(12555, len(w)-2)))
-        #return float((10000.0/sum1)/(pow(10000, len(w)-1)))'''
 
 def cPw(word, prev):
     "The conditional probability P(word | previous-word)."
@@ -198,7 +192,7 @@ def word_seg(input_line):
            
             current_word = input_line[i-j:i].encode('utf-8')
             previous_word  =  chart[i-j][0]
-            logprob = log_prob(cPw(current_word, previous_word)) + 1#the log prob gets lower and lower, and then it will ignore reasonable segment
+            logprob = log_prob(cPw(current_word, previous_word))#the log prob gets lower and lower, and then it will ignore reasonable segment
             entry = make_entry(current_word, i-j, chart[i-j][2] + logprob, i-j)
 
 
