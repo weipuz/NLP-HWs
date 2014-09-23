@@ -122,9 +122,8 @@ def avoid_long_words_character(word, N):
 PC2w = PC2dist(datafile(opts.counts1w))
 PCw = PCdist(datafile(opts.counts1w))
 #==================== End: Generate character bigram using count1w.txt ========================
-#Here are little secret parameters given by Zhiwei, we are using engineering ways to do science HAHAHAHAHHA!!!
+#Here are some secret parameters, we are doing engineering not science Saddly
 
-# Urgh... Even Worse... 86.33->80.22
 def avoid_long_words_II(word, N):
 
     if len(word)/3 == 1:
