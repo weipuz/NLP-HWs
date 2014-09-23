@@ -13,12 +13,18 @@ optparser.add_option("-i", "--inputfile", dest="input", default=os.path.join('da
 
 # Global Variables 
 debug_mode = False
-word_max_len = 6
-delta = 0.075
+# If learnable, every time finish inserting an entry to chart, we add its count by delta in dict
+learnable = True
+
+#Here are some secret parameters, we are doing engineering instead of science HAHAHAHA!
+word_max_len = 7
+delta = 0.03
 base = 10 # log base
+
 # length 1, 2, 3, 4, 5, more than 5
-length_penalty = [1.4, 3.9, 8, 12, 17, 25, 30]  # 90.15
-#length_penalty = [2, 4, 8, 12, 17, 25, 30]  #90.10
+length_penalty = [1.66, 4.15, 7.91, 11.80, 16, 24, 30]
+#length_penalty = [1.4, 3.9, 8, 12, 17, 25, 30]  #training set: 90.15 Learnable: 90.35
+#length_penalty = [2, 4, 8, 12, 17, 25, 30]  #training set: 90.10
 #length_penalty = [3, 3.9, 8.1, 15, 17, 25, 30]
 def datafile(name, sep='\t'):
     "Read key,value pairs from file."
@@ -66,6 +72,20 @@ class Pdist(dict):
             return self[key]/self.N  
         else:     
             return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
+    def update(self, key, delta):
+        if key in self and self[key] > 1:
+            self[key] += 1
+            self.N += 1
+        elif key in self:
+            temp = self[key]
+            self[key] = self[key]*1.1 + delta
+            self.N += self[key] - temp
+        else:
+            self[key] = self.get(key, 0)  + float(delta)
+            self.N += delta
+        # print key.decode('utf-8'), self[key]
+
+            
 
 def avoid_long_words(word, N):
     "Estimate the probability of an unknown word."
@@ -79,63 +99,62 @@ def avoid_long_words_II(word, N):
     return base /float(N * base **length_penalty[l-1])
 
 #==================== Begin: Generate character bigram using count1w.txt ========================
-class PCdist(dict):
-    "A probability distribution estimated from counts in datafile based on Chinese characters."
-    def __init__(self, data=[],  missingfn=None):
-        for key,count in data:
-            key = key.decode('utf-8')
-            for i in range(len(key)):
-                self[key[i]] = self.get(key[i], 0) + int(count)
+# class PCdist(dict):
+#     "A probability distribution estimated from counts in datafile based on Chinese characters."
+#     def __init__(self, data=[],  missingfn=None):
+#         for key,count in data:
+#             key = key.decode('utf-8')
+#             for i in range(len(key)):
+#                 self[key[i]] = self.get(key[i], 0) + int(count)
 
-        self.N = float(sum(self.itervalues()))
-        # for key in self:
-        #     print key, self[key]
-        # print self.N
-        self.missingfn = missingfn or (lambda k, N: 1./float(N) )
+#         self.N = float(sum(self.itervalues()))
+#         # for key in self:
+#         #     print key, self[key]
+#         # print self.N
+#         self.missingfn = missingfn or (lambda k, N: 1./float(N) )
     
-    def __call__(self, key): 
-        if key in self: 
-            return self[key]/self.N  
-        else: 
-            return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
+#     def __call__(self, key): 
+#         if key in self: 
+#             return self[key]/self.N  
+#         else: 
+#             return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
 
-class PC2dist(dict):
-    "A probability distribution estimated from counts in datafile based on Chinese characters."
-    def __init__(self, data=[],  missingfn=None):
-        for key,count in data:
-            key = key.decode('utf-8')
-            self["<S>"+key[0]] = self.get("<S>"+key[0], 0) + int(count)
-            for i in range(len(key)-1):
-                self[key[i:i+2]] = self.get(key[i:i+2], 0) + int(count)
-            self[key[-1]+"</S>"] = self.get(key[-1]+"</S>", 0) + int(count)
+# class PC2dist(dict):
+#     "A probability distribution estimated from counts in datafile based on Chinese characters."
+#     def __init__(self, data=[],  missingfn=None):
+#         for key,count in data:
+#             key = key.decode('utf-8')
+#             self["<S>"+key[0]] = self.get("<S>"+key[0], 0) + int(count)
+#             for i in range(len(key)-1):
+#                 self[key[i:i+2]] = self.get(key[i:i+2], 0) + int(count)
+#             self[key[-1]+"</S>"] = self.get(key[-1]+"</S>", 0) + int(count)
 
-        self.N = float(sum(self.itervalues()))
-        # for key in self:
-        #     print key, self[key]
-        # print self.N
-        global delta
-        self.missingfn = missingfn or (lambda k, N: delta/( float(N)*delta+ PCw(k[0]) ) )
+#         self.N = float(sum(self.itervalues()))
+#         # for key in self:
+#         #     print key, self[key]
+#         # print self.N
+#         global delta
+#         self.missingfn = missingfn or (lambda k, N: delta/( float(N)*delta+ PCw(k[0]) ) )
     
-    def __call__(self, key): 
-        if key in self: 
-            return self[key]/self.N  
-        else: 
-            return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
+#     def __call__(self, key): 
+#         if key in self: 
+#             return self[key]/self.N  
+#         else: 
+#             return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
 
-def avoid_long_words_character(word, N):
-    word = word.decode('utf-8')
-    sum_prob = 0
-    sum_prob += log_prob( PCw("<S>"+word[0]) )
-    for i in range(len(word)-1):
-        sum_prob += log_prob( PCw(word[i:i+2]))
-    sum_prob += log_prob(PCw(word[-1]+"</S>"))
-    global base 
-    return base**(sum_prob)
+# def avoid_long_words_character(word, N):
+#     word = word.decode('utf-8')
+#     sum_prob = 0
+#     sum_prob += log_prob( PCw("<S>"+word[0]) )
+#     for i in range(len(word)-1):
+#         sum_prob += log_prob( PCw(word[i:i+2]))
+#     sum_prob += log_prob(PCw(word[-1]+"</S>"))
+#     global base 
+#     return base**(sum_prob)
 
-PC2w = PC2dist(datafile(opts.counts1w))
-PCw = PCdist(datafile(opts.counts1w))
+# PC2w = PC2dist(datafile(opts.counts1w))
+# PCw = PCdist(datafile(opts.counts1w))
 #==================== End: Generate character bigram using count1w.txt ========================
-#Here are some secret parameters, we are doing engineering not science Saddly
 
 def cPw(word, prev):
     "The conditional probability P(word | previous-word)."
@@ -154,11 +173,11 @@ def make_entry(word = '', start_pos = 0, log_prob = -1e10, back_pointer = None):
 
 def word_seg(input_line):
     line_len = len(input_line)    
-    word_max_len = 8
+    global word_max_len
     chart = []   
     myheap =  []
 
-    #=========== Trivial Check: If only two characters just return it ===============
+    #=========== Trivial Check: If only one character just return it ===============
     if line_len <= 1:
         output_line = []
         output_line.append(input_line[0:].encode('utf-8'))
@@ -207,17 +226,20 @@ def word_seg(input_line):
                     print "[Chart Updated]: chart[%d]" %i,        
                     dump_entry (chart[i])  
                     print
-                   
         i = i+1;
 
-    #build output from chart table and backponter
+    #build output from chart table and backpointer
     output_line  = []
     entry = chart[line_len]
     output_line.append(entry[0])
-
+    global delta, learnable
+    if learnable:
+        Pw.update(entry[0], delta)
     while entry[3] is not None and entry[3] != 0:#append all previous words until chart[0]
         output_line.append(chart[entry[3]][0])        
         entry  = chart[entry[3]]
+        if learnable:
+            Pw.update(entry[0], delta)
     return output_line
    
 ####################################################end word_seg##################
@@ -229,10 +251,6 @@ with open(opts.input) as f:
     #count_line_number = 1
     for line in f:        
         utf8line = unicode(line.strip(), 'utf-8')
-        
-        # delimit_list = [i for i in p.split(utf8line) if i != " " and i != ""]
-        #     for i in delimit_list:
-        # print i  
         #do some preprocessing to the sentence, break it into pieces by punctuations ,     
         split_line_comma = utf8line.split(u'\uff0c') #split by comma
         # print re.match(ur"[\u4e00-\u9fa5]", utf8line)
