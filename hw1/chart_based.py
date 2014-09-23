@@ -15,14 +15,19 @@ optparser.add_option("-i", "--inputfile", dest="input", default=os.path.join('da
 debug_mode = False
 # If learnable, every time finish inserting an entry to chart, we add its count by delta in dict
 learnable = True
+# If the single word is unseen, P(w) = Pw(word) * Pw(word[-1])
+considering_last_character = False # Need to think through..
 
 #Here are some secret parameters, we are doing engineering instead of science HAHAHAHA!
-word_max_len = 7
-delta = 0.03
+word_max_len = 8
+delta = 0.08
 base = 10 # log base
 
 # length 1, 2, 3, 4, 5, more than 5
-length_penalty = [1.66, 4.15, 7.91, 11.80, 16, 24, 30]
+if considering_last_character:
+    length_penalty = [6, 4, 7.91, 11.80, 16, 24, 30]
+else:
+    length_penalty = [1.66, 4.15, 7.91, 11.80, 16, 24, 30] # without considering the last char, ts:91.37 88.48 on Learderboard
 #length_penalty = [1.4, 3.9, 8, 12, 17, 25, 30]  #training set: 90.15 Learnable: 90.35
 #length_penalty = [2, 4, 8, 12, 17, 25, 30]  #training set: 90.10
 #length_penalty = [3, 3.9, 8.1, 15, 17, 25, 30]
@@ -60,8 +65,14 @@ def log_prob(prob):
 class Pdist(dict):
     "A probability distribution estimated from counts in datafile."
     def __init__(self, data=[],  missingfn=None):
+        self.tail = {}
         for key,count in data:
             self[key] = self.get(key, 0) + int(count)
+            word = key.decode('utf-8')
+            if len(word) > 1:
+                self.tail[ word[-1] ] = self.tail.get(word[-1], 0) + int(count)
+
+        self.tailN = float(sum(self.tail.itervalues()))
 
         self.N = float(sum(self.itervalues()))
         
@@ -72,6 +83,16 @@ class Pdist(dict):
             return self[key]/self.N  
         else:     
             return self.missingfn(key, self.N)#I change it to 1/2N here, not really necessary.
+
+    #if the key only contains one character, return its probabilty as the last char.
+    def tail_prob(self, key):
+        if key in self.tail:
+            return self.tail[key]/self.tailN
+        else:
+            return 1.0/self.tailN
+
+
+    #learning from input
     def update(self, key, delta):
         if key in self and self[key] > 1:
             self[key] += 1
@@ -92,11 +113,18 @@ def avoid_long_words(word, N):
     return 10./(N * 10**len(word))
 
 def avoid_long_words_II(word, N):
-    global length_penalty, base
+    global length_penalty, base, considering_last_character
+    cword = word.decode('utf-8')
     l = len(word)/3
     if l > 6:
         l = 7
-    return base /float(N * base **length_penalty[l-1])
+    if considering_last_character:
+        if l <= 1:
+            return base /float(N * base **length_penalty[l-1])
+        else:
+            return base*Pw(cword[-1].encode('utf-8'))  /float(N * base **length_penalty[l-1])
+    else:
+        return base /float(N * base **length_penalty[l-1])
 
 #==================== Begin: Generate character bigram using count1w.txt ========================
 # class PCdist(dict):
@@ -212,6 +240,7 @@ def word_seg(input_line):
             current_word = input_line[i-j:i].encode('utf-8')
             previous_word  =  chart[i-j][0]
             logprob = log_prob(cPw(current_word, previous_word))#the log prob gets lower and lower, and then it will ignore reasonable segment
+
             entry = make_entry(current_word, i-j, chart[i-j][2] + logprob, i-j)
 
 
@@ -219,7 +248,7 @@ def word_seg(input_line):
                 dump_entry( entry ) 
                 print "%f < %f" % (chart[i][2], chart[i-j][2] +  logprob)
 
-            if chart[i][2] <= chart[i-j][2] +  logprob :
+            if chart[i][2] <= chart[i-j][2] +  logprob:
                 chart[i] = entry
                 if debug_mode:
                     print
@@ -242,7 +271,7 @@ def word_seg(input_line):
             Pw.update(entry[0], delta)
     return output_line
    
-####################################################end word_seg##################
+#====================================== End word_seg ===================================
 
 old = sys.stdout
 sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
@@ -256,9 +285,14 @@ with open(opts.input) as f:
         # print re.match(ur"[\u4e00-\u9fa5]", utf8line)
         seg_line=''
         for item in split_line_comma:  
-            fraction2 = reversed(word_seg(item))
-            for word in fraction2:
-                seg_line += word.decode('utf-8') +' '
+            #print item  
+            split_line_dunhao=item.split(u'\u3001')
+            for item2 in split_line_dunhao:
+                fraction2 = reversed(word_seg(item2))
+                for word in fraction2:
+                    seg_line += word.decode('utf-8')+' ' 
+                if item2 != split_line_dunhao[-1]:#print dunhao after fraction
+                    seg_line += u'\u3001'+' '
             if item != split_line_comma[-1]:#print comma after fraction
                 seg_line += u'\uff0c'+' ' 
         seg_line=re.sub(ur'([\uFF10-\uFF19]+)\s+(?=[\uFF10-\uFF19])',r'\1',seg_line)  # delete the whitespace between numbers
