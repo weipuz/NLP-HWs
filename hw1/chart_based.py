@@ -13,24 +13,38 @@ optparser.add_option("-i", "--inputfile", dest="input", default=os.path.join('da
 
 # Global Variables 
 debug_mode = False
-# If learnable, every time finish inserting an entry to chart, we add its count by delta in dict
-learnable = True
-# If the single word is unseen, P(w) = Pw(word) * Pw(word[-1])
-considering_last_character = False # Need to think through..
 
-#Here are some secret parameters, we are doing engineering instead of science HAHAHAHA!
+# If learnable, every time finish inserting an entry to chart, we add its count by delta in dict
+# The delta is not strictly for smoothing, but we are actually learning from the input. 
+#(The assumption is the choice made by our bigram model is quite confident.)
+learnable = True
+delta = 0.28 # learning step
+
+# Since JM_back_off only get 90.15 locally and 86 on server. I decide not to explore further on this.
+JM_back_off = False
+lam = 0.6 #JM lambda
+
+# If the single word is unseen, P(w) = Pw(word) * Pw(word[-1])
+# Need to think through.. Not in use...
+considering_last_character = False 
+
+
 word_max_len = 8
-delta = 0.08
+
 base = 10 # log base
 
-# length 1, 2, 3, 4, 5, more than 5
+#Here are some secret parameters, we are doing engineering instead of science HAHAHAHA! :p
+# penalty for length 1, 2, 3, 4, 5, more than 5
 if considering_last_character:
-    length_penalty = [6, 4, 7.91, 11.80, 16, 24, 30]
-else:
+    length_penalty = [4, 3.0, 7.3, 11.7, 17, 25, 40]
+elif JM_back_off: #because we decrease the effect, it doesn't have significant increasee
+    length_penalty = [1.60, 4.14, 7.89, 11.81, 15.97, 20, 30]
+else: #normal back off without considering characters
     length_penalty = [1.66, 4.15, 7.91, 11.80, 16, 24, 30] # without considering the last char, ts:91.37 88.48 on Learderboard
 #length_penalty = [1.4, 3.9, 8, 12, 17, 25, 30]  #training set: 90.15 Learnable: 90.35
 #length_penalty = [2, 4, 8, 12, 17, 25, 30]  #training set: 90.10
 #length_penalty = [3, 3.9, 8.1, 15, 17, 25, 30]
+
 def datafile(name, sep='\t'):
     "Read key,value pairs from file."
     for line in file(name):
@@ -76,7 +90,7 @@ class Pdist(dict):
 
         self.N = float(sum(self.itervalues()))
         
-        self.missingfn = missingfn or (lambda k, N: 1./float(N) )
+        self.missingfn = missingfn or (lambda k, N: 0 )
     
     def __call__(self, key): 
         if key in self: 
@@ -106,8 +120,7 @@ class Pdist(dict):
             self.N += delta
         # print key.decode('utf-8'), self[key]
 
-            
-
+# original rough model
 def avoid_long_words(word, N):
     "Estimate the probability of an unknown word."
     return 10./(N * 10**len(word))
@@ -126,6 +139,135 @@ def avoid_long_words_II(word, N):
     else:
         return base /float(N * base **length_penalty[l-1])
 
+def cPw(word, prev):
+    "The conditional probability P(word | previous-word)."
+    try:
+        return P2w[prev + ' ' + word]/float(Pw[prev])
+    except KeyError:
+        return Pw(word)  
+
+def JMPw(word, prev):
+    global lam
+    try: 
+        return lam * P2w(prev + ' ' + word)/Pw[prev] + (1-lam)*Pw(word)
+    except KeyError:
+        return (1-lam)*Pw(word)
+
+#load in the probability table.
+#avoid_long_words: if word not found, then the longer the word, the less likely it is right
+Pw  = Pdist(datafile(opts.counts1w),  avoid_long_words_II) 
+P2w = Pdist(datafile(opts.counts2w) )
+
+#entry tuple
+def make_entry(word = '', start_pos = 0, log_prob = -1e10, back_pointer = None):#notice the -INF log_prob 
+    return (word,start_pos, log_prob, back_pointer)
+
+#========================== Begin : Word Segmentation =================================
+def word_seg(input_line):
+    line_len = len(input_line)    
+    global word_max_len
+    chart = []   
+    myheap =  []
+
+    #=========== Trivial Check: If only one character just return it ===============
+    if line_len <= 1:
+        output_line = []
+        output_line.append(input_line[0:].encode('utf-8'))
+        return output_line
+
+    #======================= Initialize Candidates Chart  ===========================    
+    for i in range(line_len+1):
+        chart.append(make_entry())
+    chart[0] = make_entry("", 0, 0, None)
+
+    current_word = input_line[0].encode('utf-8')
+    logprob = log_prob(cPw(current_word, ""))
+    current_entry = make_entry(current_word, 0, logprob, None)
+    chart[1] = current_entry
+            
+    i = 2
+
+    if debug_mode:
+        print
+        print "="*12,"Initialize Candidates Chart & Heap ", "="*12
+        dump_entry(chart[0])
+        dump_entry(chart[1])
+        print "="*12," Initialization Complete ", "="*12
+    #=============================== Initialization Complete ===========================
+    while i <= line_len:
+        for j in range(word_max_len):
+            if j == 0 :
+                continue
+            if j > i :
+                break
+           
+            current_word = input_line[i-j:i].encode('utf-8')
+            previous_word  =  chart[i-j][0]
+            global JM_back_off
+            if JM_back_off:
+                logprob = log_prob(JMPw(current_word, previous_word))
+            else: #normal back off, if bigram is not applicable, back off to unigram
+                logprob = log_prob(cPw(current_word, previous_word))#the log prob gets lower and lower, and then it will ignore reasonable segment
+            entry = make_entry(current_word, i-j, chart[i-j][2] + logprob, i-j)
+
+
+            if debug_mode:
+                dump_entry( entry ) 
+                print "%f < %f" % (chart[i][2], chart[i-j][2] +  logprob)
+
+            if chart[i][2] <= chart[i-j][2] +  logprob:
+                chart[i] = entry
+                if debug_mode:
+                    print
+                    print "[Chart Updated]: chart[%d]" %i,        
+                    dump_entry (chart[i])  
+                    print
+        i = i+1;
+
+    #build output from chart table and backpointer
+    output_line  = []
+    entry = chart[line_len]
+    output_line.append(entry[0])
+    global delta, learnable
+    if learnable:
+        Pw.update(entry[0], delta)
+    while entry[3] is not None and entry[3] != 0:#append all previous words until chart[0]
+        output_line.append(chart[entry[3]][0])        
+        entry  = chart[entry[3]]
+        if learnable:
+            Pw.update(entry[0], delta)
+    return output_line
+   
+#========================== End : Word Segmentation =================================
+
+old = sys.stdout
+sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
+
+with open(opts.input) as f:
+    for line in f:        
+        utf8line = unicode(line.strip(), 'utf-8')
+        #do some preprocessing to the sentence, break it into pieces by punctuations ,     
+        split_line_comma = utf8line.split(u'\uff0c') #split by comma
+        # print re.match(ur"[\u4e00-\u9fa5]", utf8line)
+        seg_line=''
+        for item in split_line_comma:  
+            #print item  
+            split_line_dunhao=item.split(u'\u3001')
+            for item2 in split_line_dunhao:
+                fraction2 = reversed(word_seg(item2))
+                for word in fraction2:
+                    seg_line += word.decode('utf-8')+' ' 
+                if item2 != split_line_dunhao[-1]:#print dunhao after fraction
+                    seg_line += u'\u3001'+' '
+            if item != split_line_comma[-1]:#print comma after fraction
+                seg_line += u'\uff0c'+' ' 
+        seg_line=re.sub(ur'([\uFF10-\uFF19]+)\s+(?=[\uFF10-\uFF19])',r'\1',seg_line)  # delete the whitespace between numbers
+        seg_line=re.sub(ur'([^\xb7]*)(\s?)([\xb7])(\s?)([^\xb7]*)',r'\1\3\5',seg_line) # delete the whitespace around symbol
+        seg_line=seg_line.strip()
+        print seg_line    
+sys.stdout = old
+
+#++++++++++++++++++++++++++++++++++++++ Recycle Code ++++++++++++++++++++++++++++++++++++++++++++
 #==================== Begin: Generate character bigram using count1w.txt ========================
 # class PCdist(dict):
 #     "A probability distribution estimated from counts in datafile based on Chinese characters."
@@ -183,119 +325,3 @@ def avoid_long_words_II(word, N):
 # PC2w = PC2dist(datafile(opts.counts1w))
 # PCw = PCdist(datafile(opts.counts1w))
 #==================== End: Generate character bigram using count1w.txt ========================
-
-def cPw(word, prev):
-    "The conditional probability P(word | previous-word)."
-    try:
-        return P2w[prev + ' ' + word]/float(Pw[prev])
-    except KeyError:
-        return Pw(word)  
-
-#load in the probability table.
-Pw  = Pdist(datafile(opts.counts1w),  avoid_long_words_II) #avoid_long_words: if word not found, then the longer the word, the less likely it is right
-
-P2w = Pdist(datafile(opts.counts2w) )
-#entry tuple
-def make_entry(word = '', start_pos = 0, log_prob = -1e10, back_pointer = None):#notice the -INF log_prob 
-    return (word,start_pos, log_prob, back_pointer)
-
-def word_seg(input_line):
-    line_len = len(input_line)    
-    global word_max_len
-    chart = []   
-    myheap =  []
-
-    #=========== Trivial Check: If only one character just return it ===============
-    if line_len <= 1:
-        output_line = []
-        output_line.append(input_line[0:].encode('utf-8'))
-        return output_line
-
-    #======================= Initialize Candidates Chart  ===========================    
-    for i in range(line_len+1):
-        chart.append(make_entry())
-    chart[0] = make_entry("", 0, 0, None)
-
-    current_word = input_line[0].encode('utf-8')
-    logprob = log_prob(cPw(current_word, ""))
-    current_entry = make_entry(current_word, 0, logprob, None)
-    chart[1] = current_entry
-            
-    i = 2
-
-    if debug_mode:
-        print
-        print "="*12,"Initialize Candidates Chart & Heap ", "="*12
-        dump_entry(chart[0])
-        dump_entry(chart[1])
-        print "="*12," Initialization Complete ", "="*12
-    #=============================== Initialization Complete ===========================
-    while i <= line_len:
-        for j in range(word_max_len):
-            if j == 0 :
-                continue
-            if j > i :
-                break
-           
-            current_word = input_line[i-j:i].encode('utf-8')
-            previous_word  =  chart[i-j][0]
-            logprob = log_prob(cPw(current_word, previous_word))#the log prob gets lower and lower, and then it will ignore reasonable segment
-
-            entry = make_entry(current_word, i-j, chart[i-j][2] + logprob, i-j)
-
-
-            if debug_mode:
-                dump_entry( entry ) 
-                print "%f < %f" % (chart[i][2], chart[i-j][2] +  logprob)
-
-            if chart[i][2] <= chart[i-j][2] +  logprob:
-                chart[i] = entry
-                if debug_mode:
-                    print
-                    print "[Chart Updated]: chart[%d]" %i,        
-                    dump_entry (chart[i])  
-                    print
-        i = i+1;
-
-    #build output from chart table and backpointer
-    output_line  = []
-    entry = chart[line_len]
-    output_line.append(entry[0])
-    global delta, learnable
-    if learnable:
-        Pw.update(entry[0], delta)
-    while entry[3] is not None and entry[3] != 0:#append all previous words until chart[0]
-        output_line.append(chart[entry[3]][0])        
-        entry  = chart[entry[3]]
-        if learnable:
-            Pw.update(entry[0], delta)
-    return output_line
-   
-#====================================== End word_seg ===================================
-
-old = sys.stdout
-sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
-
-with open(opts.input) as f:
-    #count_line_number = 1
-    for line in f:        
-        utf8line = unicode(line.strip(), 'utf-8')
-        #do some preprocessing to the sentence, break it into pieces by punctuations ,     
-        split_line_comma = utf8line.split(u'\uff0c') #split by comma
-        # print re.match(ur"[\u4e00-\u9fa5]", utf8line)
-        seg_line=''
-        for item in split_line_comma:  
-            #print item  
-            split_line_dunhao=item.split(u'\u3001')
-            for item2 in split_line_dunhao:
-                fraction2 = reversed(word_seg(item2))
-                for word in fraction2:
-                    seg_line += word.decode('utf-8')+' ' 
-                if item2 != split_line_dunhao[-1]:#print dunhao after fraction
-                    seg_line += u'\u3001'+' '
-            if item != split_line_comma[-1]:#print comma after fraction
-                seg_line += u'\uff0c'+' ' 
-        seg_line=re.sub(ur'([\uFF10-\uFF19]+)\s+(?=[\uFF10-\uFF19])',r'\1',seg_line)  # delete the whitespace between numbers
-        seg_line=seg_line.strip()
-        print seg_line    
-sys.stdout = old
